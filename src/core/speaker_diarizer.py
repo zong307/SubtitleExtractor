@@ -145,27 +145,42 @@ class SpeakerDiarizer:
             labels = model.fit_predict(embeddings)
             return labels.tolist()
 
-        # Auto-detect number of speakers: try 2..min(10, n_samples) and pick best silhouette
-        max_k = min(10, len(embeddings))
+        # Auto-detect number of speakers: try 2..min(10, n_samples-1) and pick best silhouette
+        # Ensure we don't try to cluster more groups than samples
+        max_k = min(10, len(embeddings) - 1)
         if max_k < 2:
+            # If we have less than 2 valid samples for clustering, return all as same speaker
             return [0] * len(embeddings)
 
         best_k = 2
         best_score = -1.0
+        
+        # Only try clustering if we have enough samples
         for k in range(2, max_k + 1):
-            model = AgglomerativeClustering(
-                n_clusters=k, metric="cosine", linkage="average"
-            )
-            labels = model.fit_predict(embeddings)
-            if len(set(labels)) < 2:
+            if k > len(embeddings):
+                break  # Cannot cluster more groups than samples
+            try:
+                model = AgglomerativeClustering(
+                    n_clusters=k, metric="cosine", linkage="average"
+                )
+                labels = model.fit_predict(embeddings)
+                if len(set(labels)) < 2:
+                    continue
+                score = silhouette_score(embeddings, labels, metric="cosine")
+                if score > best_score:
+                    best_score = score
+                    best_k = k
+            except Exception as e:
+                logger.warning(f"Skipping clustering with {k} clusters due to error: {e}")
                 continue
-            score = silhouette_score(embeddings, labels, metric="cosine")
-            if score > best_score:
-                best_score = score
-                best_k = k
 
+        # Final clustering - ensure we don't try to cluster more groups than samples
+        final_k = min(best_k, len(embeddings))
+        if final_k < 2:
+            return [0] * len(embeddings)
+            
         model = AgglomerativeClustering(
-            n_clusters=best_k, metric="cosine", linkage="average"
+            n_clusters=final_k, metric="cosine", linkage="average"
         )
         labels = model.fit_predict(embeddings)
         return labels.tolist()
