@@ -205,3 +205,18 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Settings (user-specific)
+*.user.json
+
+# Logs
+logs/
+
+# temp files
+temp/

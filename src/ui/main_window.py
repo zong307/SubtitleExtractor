@@ -1,0 +1,638 @@
+"""Main application window – PyQt5 UI for the subtitle extractor."""
+
+from __future__ import annotations
+
+import os
+from datetime import datetime
+from typing import Optional
+
+from loguru import logger
+from PyQt5.QtCore import Qt, pyqtSlot
+from PyQt5.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSpinBox,
+    QStatusBar,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from src.asr import ASRRegistry
+from src.config.defaults import LANGUAGES
+from src.config.settings import SettingsManager
+from src.ui.log_handler import QtLogHandler
+from src.ui.style import get_dark_stylesheet
+from src.ui.worker import PipelineWorker
+from src.utils.device import get_available_devices, get_device_display_info
+from src.utils.logger import add_ui_sink
+
+# Color map for log levels
+_LOG_COLORS = {
+    "DEBUG": "#6B7280",
+    "INFO": "#3B82F6",
+    "SUCCESS": "#10B981",
+    "WARNING": "#F59E0B",
+    "ERROR": "#EF4444",
+    "CRITICAL": "#DC2626",
+}
+
+
+class MainWindow(QMainWindow):
+    """Top-level application window."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle("Subtitle Extractor - 音视频字幕提取工具")
+        self.setMinimumSize(960, 720)
+        self.resize(1060, 800)
+
+        self._settings = SettingsManager()
+        self._worker: Optional[PipelineWorker] = None
+
+        # Log handler (bridges loguru -> UI)
+        self._log_handler = QtLogHandler()
+        self._log_handler.log_received.connect(self._on_log_message)
+        self._log_sink_id = add_ui_sink(self._log_handler.write, log_level="DEBUG")
+
+        self._build_ui()
+        self._load_settings()
+        self._connect_signals()
+
+        self.setStyleSheet(get_dark_stylesheet())
+
+        logger.info("应用程序已启动")
+
+    # ==================================================================
+    # UI Construction
+    # ==================================================================
+
+    def _build_ui(self) -> None:
+        central = QWidget()
+        self.setCentralWidget(central)
+
+        # Scroll area for the whole content
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+
+        content = QWidget()
+        self._main_layout = QVBoxLayout(content)
+        self._main_layout.setSpacing(8)
+        self._main_layout.setContentsMargins(12, 8, 12, 8)
+
+        self._build_input_section()
+        self._build_model_section()
+        self._build_params_section()
+        self._build_output_section()
+        self._build_progress_section()
+        self._build_log_section()
+
+        scroll.setWidget(content)
+
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+
+        # Status bar
+        self._status_bar = QStatusBar()
+        self.setStatusBar(self._status_bar)
+        self._device_label = QLabel(get_device_display_info())
+        self._version_label = QLabel("v1.0.0")
+        self._status_bar.addPermanentWidget(self._version_label)
+        self._status_bar.addPermanentWidget(self._device_label)
+
+    # -- Input file section ------------------------------------------------
+
+    def _build_input_section(self) -> None:
+        group = QGroupBox("输入文件")
+        layout = QHBoxLayout()
+        self._input_path = QLineEdit()
+        self._input_path.setReadOnly(True)
+        self._input_path.setPlaceholderText("选择一个视频或音频文件...")
+        self._browse_input_btn = QPushButton("浏览...")
+        layout.addWidget(self._input_path, 1)
+        layout.addWidget(self._browse_input_btn)
+        group.setLayout(layout)
+        self._main_layout.addWidget(group)
+
+    # -- Model / diarization section ---------------------------------------
+
+    def _build_model_section(self) -> None:
+        row = QHBoxLayout()
+        row.setSpacing(8)
+
+        # ASR model config
+        asr_group = QGroupBox("ASR 模型配置")
+        asr_layout = QGridLayout()
+
+        asr_layout.addWidget(QLabel("模型类型:"), 0, 0)
+        self._asr_type_combo = QComboBox()
+        for t in ASRRegistry.list_types():
+            self._asr_type_combo.addItem(ASRRegistry.get_display_name(t), t)
+        asr_layout.addWidget(self._asr_type_combo, 0, 1)
+
+        asr_layout.addWidget(QLabel("模型规格:"), 1, 0)
+        self._model_size_combo = QComboBox()
+        asr_layout.addWidget(self._model_size_combo, 1, 1)
+
+        asr_layout.addWidget(QLabel("计算设备:"), 2, 0)
+        self._device_combo = QComboBox()
+        for dev in get_available_devices():
+            self._device_combo.addItem(dev)
+        asr_layout.addWidget(self._device_combo, 2, 1)
+
+        asr_group.setLayout(asr_layout)
+        row.addWidget(asr_group, 1)
+
+        # Speaker diarization
+        diar_group = QGroupBox("可选功能")
+        diar_layout = QVBoxLayout()
+        self._enable_diarization = QCheckBox("启用说话人分离 (CAM++)")
+        self._enable_diarization.setToolTip(
+            "使用 CAM++ 模型自动识别不同说话人，并在字幕中标注说话人身份"
+        )
+        diar_layout.addWidget(self._enable_diarization)
+        diar_layout.addStretch()
+        diar_group.setLayout(diar_layout)
+        row.addWidget(diar_group, 1)
+
+        wrapper = QWidget()
+        wrapper.setLayout(row)
+        self._main_layout.addWidget(wrapper)
+
+        # Populate model sizes for the initially selected ASR type
+        self._update_model_sizes()
+
+    # -- Parameters section ------------------------------------------------
+
+    def _build_params_section(self) -> None:
+        group = QGroupBox("处理参数")
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+
+        # Row 0
+        grid.addWidget(QLabel("目标语言:"), 0, 0)
+        self._language_combo = QComboBox()
+        for code, display in LANGUAGES.items():
+            self._language_combo.addItem(display, code)
+        grid.addWidget(self._language_combo, 0, 1)
+
+        grid.addWidget(QLabel("VAD 阈值:"), 0, 2)
+        self._vad_threshold = QDoubleSpinBox()
+        self._vad_threshold.setRange(0.01, 1.0)
+        self._vad_threshold.setSingleStep(0.05)
+        self._vad_threshold.setDecimals(2)
+        self._vad_threshold.setToolTip("语音活动检测的置信度阈值，越高越严格")
+        grid.addWidget(self._vad_threshold, 0, 3)
+
+        # Row 1
+        grid.addWidget(QLabel("静音结束延迟 (ms):"), 1, 0)
+        self._silence_delay = QSpinBox()
+        self._silence_delay.setRange(50, 5000)
+        self._silence_delay.setSingleStep(50)
+        self._silence_delay.setToolTip("检测到静音后等待多少毫秒才判定语音结束")
+        grid.addWidget(self._silence_delay, 1, 1)
+
+        grid.addWidget(QLabel("片段前后扩充 (秒):"), 1, 2)
+        self._padding_spin = QDoubleSpinBox()
+        self._padding_spin.setRange(0.0, 10.0)
+        self._padding_spin.setSingleStep(0.5)
+        self._padding_spin.setDecimals(1)
+        self._padding_spin.setToolTip("对 VAD 检测到的每个语音片段前后各扩展的时长")
+        grid.addWidget(self._padding_spin, 1, 3)
+
+        # Row 2
+        grid.addWidget(QLabel("单条字幕上限 (字):"), 2, 0)
+        self._max_chars = QSpinBox()
+        self._max_chars.setRange(10, 200)
+        self._max_chars.setSingleStep(5)
+        self._max_chars.setToolTip("单条字幕的最大字符数，超出会自动拆分")
+        grid.addWidget(self._max_chars, 2, 1)
+
+        grid.addWidget(QLabel("语音片段上限 (秒):"), 2, 2)
+        self._max_speech_duration = QDoubleSpinBox()
+        self._max_speech_duration.setRange(5.0, 300.0)
+        self._max_speech_duration.setSingleStep(5.0)
+        self._max_speech_duration.setDecimals(1)
+        self._max_speech_duration.setToolTip(
+            "单个语音片段的最大时长，超长片段将被强制切分后再送入 ASR"
+        )
+        grid.addWidget(self._max_speech_duration, 2, 3)
+
+        # Row 3
+        grid.addWidget(QLabel("模型存储路径:"), 3, 0)
+        model_path_layout = QHBoxLayout()
+        self._model_dir_input = QLineEdit()
+        self._model_dir_input.setPlaceholderText("留空使用默认缓存路径")
+        self._browse_model_dir_btn = QPushButton("更改...")
+        model_path_layout.addWidget(self._model_dir_input, 1)
+        model_path_layout.addWidget(self._browse_model_dir_btn)
+        grid.addLayout(model_path_layout, 3, 1, 1, 3)
+
+        # Row 4: reset button
+        btn_row = QHBoxLayout()
+        self._reset_btn = QPushButton("重置为默认值")
+        btn_row.addStretch()
+        btn_row.addWidget(self._reset_btn)
+        grid.addLayout(btn_row, 4, 0, 1, 4)
+
+        group.setLayout(grid)
+        self._main_layout.addWidget(group)
+
+    # -- Output section ----------------------------------------------------
+
+    def _build_output_section(self) -> None:
+        group = QGroupBox("输出设置")
+        grid = QGridLayout()
+
+        grid.addWidget(QLabel("CSV 输出路径:"), 0, 0)
+        self._csv_path = QLineEdit()
+        self._csv_path.setPlaceholderText("选择 CSV 保存路径...")
+        self._browse_csv_btn = QPushButton("浏览...")
+        grid.addWidget(self._csv_path, 0, 1)
+        grid.addWidget(self._browse_csv_btn, 0, 2)
+
+        grid.addWidget(QLabel("SRT 输出路径:"), 1, 0)
+        self._srt_path = QLineEdit()
+        self._srt_path.setPlaceholderText("选择 SRT 保存路径...")
+        self._browse_srt_btn = QPushButton("浏览...")
+        grid.addWidget(self._srt_path, 1, 1)
+        grid.addWidget(self._browse_srt_btn, 1, 2)
+
+        group.setLayout(grid)
+        self._main_layout.addWidget(group)
+
+    # -- Progress section --------------------------------------------------
+
+    def _build_progress_section(self) -> None:
+        group = QGroupBox("处理进度")
+        layout = QVBoxLayout()
+
+        self._status_label = QLabel("就绪")
+        self._status_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(self._status_label)
+
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        layout.addWidget(self._progress_bar)
+
+        self._detail_label = QLabel("")
+        self._detail_label.setStyleSheet("color: #B0B0C0;")
+        layout.addWidget(self._detail_label)
+
+        btn_row = QHBoxLayout()
+        self._start_btn = QPushButton("开始处理")
+        self._start_btn.setObjectName("start_btn")
+        self._stop_btn = QPushButton("停止")
+        self._stop_btn.setObjectName("stop_btn")
+        self._stop_btn.setEnabled(False)
+        btn_row.addStretch()
+        btn_row.addWidget(self._start_btn)
+        btn_row.addWidget(self._stop_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        group.setLayout(layout)
+        self._main_layout.addWidget(group)
+
+    # -- Log section -------------------------------------------------------
+
+    def _build_log_section(self) -> None:
+        group = QGroupBox("日志输出")
+        layout = QVBoxLayout()
+
+        self._log_viewer = QTextEdit()
+        self._log_viewer.setObjectName("log_viewer")
+        self._log_viewer.setReadOnly(True)
+        self._log_viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._log_viewer.setMinimumHeight(120)
+        layout.addWidget(self._log_viewer, 1)
+
+        btn_row = QHBoxLayout()
+        self._clear_log_btn = QPushButton("清空日志")
+        self._export_log_btn = QPushButton("导出日志")
+        btn_row.addStretch()
+        btn_row.addWidget(self._clear_log_btn)
+        btn_row.addWidget(self._export_log_btn)
+        layout.addLayout(btn_row)
+
+        group.setLayout(layout)
+        self._main_layout.addWidget(group, 1)
+
+    # ==================================================================
+    # Signal / Slot Wiring
+    # ==================================================================
+
+    def _connect_signals(self) -> None:
+        # Buttons
+        self._browse_input_btn.clicked.connect(self._browse_input_file)
+        self._browse_csv_btn.clicked.connect(lambda: self._browse_save_file("csv"))
+        self._browse_srt_btn.clicked.connect(lambda: self._browse_save_file("srt"))
+        self._browse_model_dir_btn.clicked.connect(self._browse_model_dir)
+        self._start_btn.clicked.connect(self._start_processing)
+        self._stop_btn.clicked.connect(self._stop_processing)
+        self._clear_log_btn.clicked.connect(self._log_viewer.clear)
+        self._export_log_btn.clicked.connect(self._export_log)
+        self._reset_btn.clicked.connect(self._reset_settings)
+
+        # ASR type change -> update model size options
+        self._asr_type_combo.currentIndexChanged.connect(self._update_model_sizes)
+
+        # Auto-save on any change
+        self._asr_type_combo.currentIndexChanged.connect(self._auto_save)
+        self._model_size_combo.currentIndexChanged.connect(self._auto_save)
+        self._device_combo.currentIndexChanged.connect(self._auto_save)
+        self._enable_diarization.stateChanged.connect(self._auto_save)
+        self._language_combo.currentIndexChanged.connect(self._auto_save)
+        self._vad_threshold.valueChanged.connect(self._auto_save)
+        self._silence_delay.valueChanged.connect(self._auto_save)
+        self._padding_spin.valueChanged.connect(self._auto_save)
+        self._max_chars.valueChanged.connect(self._auto_save)
+        self._max_speech_duration.valueChanged.connect(self._auto_save)
+        self._model_dir_input.editingFinished.connect(self._auto_save)
+
+    # ==================================================================
+    # Slots
+    # ==================================================================
+
+    def _browse_input_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择音频/视频文件",
+            "",
+            "媒体文件 (*.mp4 *.avi *.mkv *.mov *.flv *.webm *.mp3 *.wav *.flac *.m4a *.aac *.ogg *.wma);;所有文件 (*)",
+        )
+        if path:
+            self._input_path.setText(path)
+            # Always update output paths to match the new input file
+            base = os.path.splitext(path)[0]
+            self._csv_path.setText(base + ".csv")
+            self._srt_path.setText(base + ".srt")
+
+    def _browse_save_file(self, fmt: str) -> None:
+        if fmt == "csv":
+            path, _ = QFileDialog.getSaveFileName(
+                self, "保存 CSV 文件", "", "CSV 文件 (*.csv)"
+            )
+            if path:
+                self._csv_path.setText(path)
+        else:
+            path, _ = QFileDialog.getSaveFileName(
+                self, "保存 SRT 字幕文件", "", "SRT 字幕 (*.srt)"
+            )
+            if path:
+                self._srt_path.setText(path)
+
+    def _browse_model_dir(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "选择模型存储目录")
+        if path:
+            self._model_dir_input.setText(path)
+            self._auto_save()
+
+    def _update_model_sizes(self) -> None:
+        asr_type = self._asr_type_combo.currentData()
+        if not asr_type:
+            return
+        self._model_size_combo.blockSignals(True)
+        self._model_size_combo.clear()
+        for size in ASRRegistry.get_model_sizes(asr_type):
+            self._model_size_combo.addItem(size)
+        self._model_size_combo.blockSignals(False)
+
+    def _start_processing(self) -> None:
+        # Validate
+        input_path = self._input_path.text().strip()
+        csv_path = self._csv_path.text().strip()
+        srt_path = self._srt_path.text().strip()
+
+        if not input_path:
+            QMessageBox.warning(self, "提示", "请先选择输入文件。")
+            return
+        if not os.path.isfile(input_path):
+            QMessageBox.warning(self, "提示", f"输入文件不存在:\n{input_path}")
+            return
+        if not csv_path or not srt_path:
+            QMessageBox.warning(self, "提示", "请设置 CSV 和 SRT 输出路径。")
+            return
+
+        # Build config from UI
+        config = self._collect_config()
+
+        # Disable UI
+        self._set_ui_enabled(False)
+        self._progress_bar.setValue(0)
+        self._status_label.setText("正在初始化...")
+        self._detail_label.setText("")
+
+        # Create and start worker
+        self._worker = PipelineWorker(config, input_path, csv_path, srt_path)
+        self._worker.progress_updated.connect(self._on_progress)
+        self._worker.finished_ok.connect(self._on_finished_ok)
+        self._worker.finished_error.connect(self._on_finished_error)
+        self._worker.finished_cancelled.connect(self._on_finished_cancelled)
+        self._worker.start()
+
+    def _stop_processing(self) -> None:
+        reply = QMessageBox.question(
+            self,
+            "确认停止",
+            "确定要停止处理吗？已处理的数据将会保存。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes and self._worker is not None:
+            self._worker.cancel()
+            self._stop_btn.setEnabled(False)
+            self._status_label.setText("正在停止...")
+
+    @pyqtSlot(str, float, str)
+    def _on_progress(self, step: str, pct: float, msg: str) -> None:
+        self._progress_bar.setValue(int(pct))
+        self._detail_label.setText(msg)
+        if step == "done":
+            self._status_label.setText("完成")
+            self._status_label.setStyleSheet("font-weight: bold; color: #10B981;")
+        else:
+            self._status_label.setText("处理中...")
+
+    @pyqtSlot(str)
+    def _on_finished_ok(self, msg: str) -> None:
+        self._set_ui_enabled(True)
+        self._status_label.setText("完成")
+        self._status_label.setStyleSheet("font-weight: bold; color: #10B981;")
+        QMessageBox.information(self, "处理完成", msg)
+
+    @pyqtSlot(str)
+    def _on_finished_error(self, msg: str) -> None:
+        self._set_ui_enabled(True)
+        self._status_label.setText("失败")
+        self._status_label.setStyleSheet("font-weight: bold; color: #EF4444;")
+        QMessageBox.critical(self, "处理失败", f"发生错误:\n{msg}")
+
+    @pyqtSlot(str)
+    def _on_finished_cancelled(self, msg: str) -> None:
+        self._set_ui_enabled(True)
+        self._status_label.setText("已取消")
+        self._status_label.setStyleSheet("font-weight: bold; color: #F59E0B;")
+        QMessageBox.information(self, "已取消", msg)
+
+    @pyqtSlot(str, str)
+    def _on_log_message(self, level: str, text: str) -> None:
+        color = _LOG_COLORS.get(level, "#E0E0E0")
+        escaped = (
+            text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        )
+        html = f'<span style="color:{color};">{escaped}</span>'
+        self._log_viewer.append(html)
+        # Auto-scroll to bottom
+        sb = self._log_viewer.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def _export_log(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出日志", "", "文本文件 (*.txt);;所有文件 (*)"
+        )
+        if path:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self._log_viewer.toPlainText())
+            logger.info(f"日志已导出至: {path}")
+
+    def _reset_settings(self) -> None:
+        reply = QMessageBox.question(
+            self,
+            "重置设置",
+            "确定将所有参数重置为默认值吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self._settings.reset()
+            self._load_settings()
+            logger.info("设置已重置为默认值")
+
+    # ==================================================================
+    # Settings persistence
+    # ==================================================================
+
+    def _load_settings(self) -> None:
+        """Populate UI widgets from saved settings."""
+        s = self._settings
+
+        # ASR
+        asr_type = s.get("asr.type", "whisper")
+        idx = self._asr_type_combo.findData(asr_type)
+        if idx >= 0:
+            self._asr_type_combo.setCurrentIndex(idx)
+        self._update_model_sizes()
+        model_size = s.get("asr.model_size", "turbo")
+        idx = self._model_size_combo.findText(model_size)
+        if idx >= 0:
+            self._model_size_combo.setCurrentIndex(idx)
+
+        device = s.get("asr.device", "cpu")
+        idx = self._device_combo.findText(device)
+        if idx >= 0:
+            self._device_combo.setCurrentIndex(idx)
+
+        # Language
+        lang = s.get("asr.language", "zh")
+        idx = self._language_combo.findData(lang)
+        if idx >= 0:
+            self._language_combo.setCurrentIndex(idx)
+
+        # VAD
+        self._vad_threshold.setValue(s.get("vad.threshold", 0.5))
+        self._silence_delay.setValue(s.get("vad.min_silence_duration_ms", 300))
+        self._max_speech_duration.setValue(s.get("vad.max_speech_duration_s", 30.0))
+
+        # Audio
+        self._padding_spin.setValue(s.get("audio.padding_seconds", 2.0))
+
+        # Subtitle
+        self._max_chars.setValue(s.get("subtitle.max_chars_per_subtitle", 30))
+
+        # Diarization
+        self._enable_diarization.setChecked(s.get("diarization.enabled", False))
+
+        # Paths
+        self._model_dir_input.setText(s.get("paths.model_dir", ""))
+
+    def _auto_save(self) -> None:
+        """Persist current UI state to settings file."""
+        s = self._settings
+        s.set("asr.type", self._asr_type_combo.currentData() or "whisper")
+        s.set("asr.model_size", self._model_size_combo.currentText())
+        s.set("asr.device", self._device_combo.currentText())
+        s.set("asr.language", self._language_combo.currentData() or "zh")
+        s.set("vad.threshold", self._vad_threshold.value())
+        s.set("vad.min_silence_duration_ms", self._silence_delay.value())
+        s.set("vad.max_speech_duration_s", self._max_speech_duration.value())
+        s.set("audio.padding_seconds", self._padding_spin.value())
+        s.set("subtitle.max_chars_per_subtitle", self._max_chars.value())
+        s.set("diarization.enabled", self._enable_diarization.isChecked())
+        s.set("paths.model_dir", self._model_dir_input.text().strip())
+
+    def _collect_config(self) -> dict:
+        """Build the pipeline config dict from current UI values."""
+        return self._settings.get_all()
+
+    # ==================================================================
+    # Helpers
+    # ==================================================================
+
+    def _set_ui_enabled(self, enabled: bool) -> None:
+        """Toggle input controls and start/stop buttons."""
+        self._start_btn.setEnabled(enabled)
+        self._stop_btn.setEnabled(not enabled)
+        self._browse_input_btn.setEnabled(enabled)
+        self._browse_csv_btn.setEnabled(enabled)
+        self._browse_srt_btn.setEnabled(enabled)
+        self._asr_type_combo.setEnabled(enabled)
+        self._model_size_combo.setEnabled(enabled)
+        self._device_combo.setEnabled(enabled)
+        self._enable_diarization.setEnabled(enabled)
+        self._language_combo.setEnabled(enabled)
+        self._vad_threshold.setEnabled(enabled)
+        self._silence_delay.setEnabled(enabled)
+        self._padding_spin.setEnabled(enabled)
+        self._max_chars.setEnabled(enabled)
+        self._max_speech_duration.setEnabled(enabled)
+        self._model_dir_input.setEnabled(enabled)
+        self._browse_model_dir_btn.setEnabled(enabled)
+        self._reset_btn.setEnabled(enabled)
+        if not enabled:
+            self._status_label.setStyleSheet("font-weight: bold; color: #E0E0E0;")
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self._auto_save()
+        # If worker is running, ask to stop
+        if self._worker is not None and self._worker.isRunning():
+            reply = QMessageBox.question(
+                self,
+                "确认退出",
+                "处理仍在运行中，确定退出吗？已处理的数据将会保存。",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply == QMessageBox.No:
+                event.ignore()
+                return
+            self._worker.cancel()
+            self._worker.wait(5000)
+        event.accept()

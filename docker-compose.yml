@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  subtitle-extractor:
+    build: .
+    environment:
+      - DISPLAY=${DISPLAY}
+      # Uncomment for NVIDIA GPU support
+      # - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      # X11 socket for GUI display (Linux)
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Mount your media files directory
+      - ./data:/data
+      # Persist model cache
+      - subtitle_models:/root/.cache
+      # Persist settings
+      - subtitle_config:/root/.config/subtitle_extractor
+    # Uncomment for GPU support
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  subtitle_models:
+  subtitle_config:
