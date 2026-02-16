@@ -2,12 +2,15 @@
 
 一个基于AI技术的音视频字幕自动生成工具，支持多种ASR（自动语音识别）引擎，提供图形界面操作，能够从视频或音频文件中提取文字并生成SRT和CSV格式的字幕文件。
 
+[中文版 README](./README.md) | [English README](./README_en.md)
+
 ## 功能特性
 
 - 🎬 支持多种音视频格式输入（MP4, AVI, MKV, MOV, MP3, WAV等）
 - 🤖 多种ASR引擎支持（Whisper, Qwen等）
 - 🔊 语音活动检测（VAD）和音频增强
 - 👥 可选说话人分离功能（CAM++模型）
+- 🌍 可选字幕翻译功能（支持多语言互译）
 - 📄 输出多种格式：SRT字幕文件和CSV数据表格
 - 🎨 直观的图形用户界面（PyQt5）
 - ⚙️ 丰富的参数配置选项
@@ -22,6 +25,7 @@
 - **VAD处理器**：语音活动检测，精准定位语音片段
 - **音频处理器**：音频提取与增强，提升识别质量
 - **说话人分离器**：区分不同说话人（可选功能）
+- **翻译模块**：字幕翻译功能，支持多语言互译
 - **字幕生成器**：生成最终的字幕文件
 - **GUI界面**：PyQt5图形界面，方便操作
 
@@ -29,15 +33,15 @@
 
 ### 环境要求
 
-- Python 3.8+
+- Python 3.12+
 - pip包管理器
 
 ### 安装步骤
 
 1. 克隆项目：
    ```bash
-   git clone <repository-url>
-   cd subtitle2
+   git clone git@github.com:zong307/SubtitleExtractor.git
+   cd SubtitleExtractor
    ```
 
 2. 创建虚拟环境（推荐）：
@@ -55,7 +59,7 @@
 
 4. 启动应用：
    ```bash
-   python -m src.main
+   python app.py
    ```
 
 ## 使用方法
@@ -80,15 +84,7 @@
 
 ## Docker部署（可选）
 
-项目提供了Dockerfile和docker-compose.yml文件，可以使用Docker进行部署：
-
-```bash
-# 构建镜像
-docker-compose build
-
-# 运行容器
-docker-compose up -d
-```
+> 开发中
 
 ## 开发说明
 
@@ -113,8 +109,21 @@ src/
 
 请参阅LICENSE文件获取详细信息。
 
-## 致谢
+## 开源项目引用
 
-- OpenAI Whisper - 语音识别模型
-- PyQt5 - 图形界面框架
-- Silero VAD - 语音活动检测
+本项目依赖以下开源项目，在此表示感谢：
+
+- [OpenAI Whisper](https://github.com/openai/whisper) - 语音识别模型
+- [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) - 阿里巴巴通义千问ASR模型
+- [PyQt5](https://www.riverbankcomputing.com/software/pyqt/) - 图形界面框架
+- [Silero VAD](https://github.com/snakers4/silero-vad) - 语音活动检测
+- [Hugging Face Transformers](https://github.com/huggingface/transformers) - 深度学习模型库
+- [PyTorch](https://pytorch.org/) - 机器学习框架
+- [FFmpeg](https://ffmpeg.org/) - 音视频处理工具
+- [Google TranslateGemma](https://github.com/google/gemma) - Google Gemma系列模型（用于翻译功能）
+- [FunASR](https://github.com/modelscope/funasr) - 阿里巴巴开源的ASR工具包
+- [Loguru](https://github.com/Delgan/loguru) - 日志记录库
+- [Scipy](https://github.com/scipy/scipy) - 科学计算库
+- [Numpy](https://numpy.org/) - 数值计算基础库
+- [FFmpeg-Python](https://github.com/kkroening/ffmpeg-python) - FFmpeg的Python接口
+- [Scikit-learn](https://scikit-learn.org/) - 机器学习库
