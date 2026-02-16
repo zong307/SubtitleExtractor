@@ -94,6 +94,79 @@ class QwenASR(ASRBase):
 
         logger.info("Qwen3-ASR model loaded.")
 
+    def _align_words_with_text(self, full_text: str, raw_words: list[dict]) -> list[WordTimestamp]:
+        """Align raw word timestamps with the actual text positions to preserve spacing."""
+        if not full_text or not raw_words:
+            return []
+        
+        # Sort raw words by their start time to maintain chronological order
+        sorted_raw_words = sorted(raw_words, key=lambda x: x["start"])
+        
+        aligned_words: list[WordTimestamp] = []
+        
+        # Track our position in the original text
+        text_idx = 0
+        
+        for raw_word_data in sorted_raw_words:
+            word_text = raw_word_data["word"]
+            start_time = raw_word_data["start"]
+            end_time = raw_word_data["end"]
+            
+            if not word_text:
+                continue
+            
+            # Find the word in the original text starting from our current position
+            # This handles repeated words by finding the next occurrence
+            word_pos = full_text.find(word_text, text_idx)
+            
+            if word_pos != -1:
+                # The key improvement: we need to capture the actual text from the current
+                # position in the text to the position of this word, which may include spaces
+                if word_pos > text_idx:
+                    # There's text between the current position and the found word
+                    # This text likely contains spaces or punctuation that should be preserved with the previous word
+                    spacing_text = full_text[text_idx:word_pos]
+                    # We append this spacing to the previous word
+                    if aligned_words:
+                        # Append the spacing to the previous word's text
+                        prev_word = aligned_words[-1]
+                        aligned_words[-1] = WordTimestamp(
+                            word=prev_word.word + spacing_text,
+                            start=prev_word.start,
+                            end=prev_word.end
+                        )
+                
+                # Now add the actual word with its timestamps
+                actual_word_text = full_text[word_pos:word_pos + len(word_text)]
+                aligned_words.append(WordTimestamp(
+                    word=actual_word_text,
+                    start=start_time,
+                    end=end_time
+                ))
+                
+                # Move the text position forward past this word
+                text_idx = word_pos + len(word_text)
+            else:
+                # Word not found in the remaining text, add it without precise positioning
+                aligned_words.append(WordTimestamp(
+                    word=word_text,
+                    start=start_time,
+                    end=end_time
+                ))
+        
+        # Handle any remaining text after the last word (e.g., punctuation at the end)
+        if text_idx < len(full_text) and aligned_words:
+            # Append any remaining text (like punctuation) to the last word
+            remaining_text = full_text[text_idx:]
+            last_word = aligned_words[-1]
+            aligned_words[-1] = WordTimestamp(
+                word=last_word.word + remaining_text,
+                start=last_word.start,
+                end=last_word.end
+            )
+        
+        return aligned_words
+
     def transcribe(
         self,
         audio_path: str,
@@ -128,25 +201,27 @@ class QwenASR(ASRBase):
                 res, "words", None
             )
             if raw_timestamps and hasattr(raw_timestamps, "items"):
+                # Process word-level timestamps to preserve spacing in the original text
+                raw_words = []
                 for item in raw_timestamps.items:
                     if isinstance(item, dict):
-                        words.append(
-                            WordTimestamp(
-                                word=item.get("word", item.get("text", "")).strip(),
-                                start=float(item.get("start_time", 0)),
-                                end=float(item.get("end_time", 0)),
-                            )
-                        )
+                        raw_words.append({
+                            "word": item.get("word", item.get("text", "")).strip(),
+                            "start": float(item.get("start_time", 0)),
+                            "end": float(item.get("end_time", 0)),
+                        })
                     elif hasattr(item, "word") or hasattr(item, "text"):
-                        words.append(
-                            WordTimestamp(
-                                word=getattr(
-                                    item, "word", getattr(item, "text", "")
-                                ).strip(),
-                                start=float(getattr(item, "start_time", 0)),
-                                end=float(getattr(item, "end_time", 0)),
-                            )
-                        )
+                        raw_words.append({
+                            "word": getattr(item, "word", getattr(item, "text", "")).strip(),
+                            "start": float(getattr(item, "start_time", 0)),
+                            "end": float(getattr(item, "end_time", 0)),
+                        })
+                
+                # Reconstruct the text with proper spacing by mapping words back to the original text
+                if raw_words:
+                    words = self._align_words_with_text(text, raw_words)
+                else:
+                    words = []
 
             # Determine segment time range
             start_time = float(getattr(res, "start", 0))
