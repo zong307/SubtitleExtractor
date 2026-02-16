@@ -7,7 +7,9 @@ from datetime import datetime
 from typing import Optional
 
 from loguru import logger
-from PyQt5.QtCore import Qt, pyqtSlot
+from PyQt5.QtCore import Qt, pyqtSlot, QUrl
+from PyQt5.QtGui import QPixmap, QIcon, QDesktopServices
+from PyQt5.QtSvg import QSvgWidget  # Import SVG support
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -399,6 +401,36 @@ class MainWindow(QMainWindow):
 
         group.setLayout(layout)
         self._main_layout.addWidget(group, 1)
+        
+        # Add GitHub link and author info
+        github_row = QHBoxLayout()
+        github_row.addStretch()  # Left padding
+        
+        # Create a clickable SVG widget for GitHub logo
+        github_svg_widget = QSvgWidget()
+        github_svg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'ui', 'pic', 'GitHub_Lockup_White.svg')
+        github_svg_widget.load(github_svg_path)
+        github_svg_widget.setFixedSize(60, 14)  # Adjust size to fit the GitHub logo appropriately
+        github_svg_widget.setStyleSheet("background: transparent;")  # Make background transparent
+        
+        # Create a clickable label that will handle the click event
+        github_clickable_label = QLabel()
+        github_clickable_label.setPixmap(github_svg_widget.grab())  # Grab the rendered SVG as pixmap
+        github_clickable_label.setCursor(Qt.PointingHandCursor)  # Set cursor to hand pointer
+        github_clickable_label.mousePressEvent = lambda event: QDesktopServices.openUrl(QUrl("https://github.com/zong307/SubtitleExtractor"))
+        
+        # Add the clickable GitHub logo to the layout
+        github_row.addWidget(github_clickable_label)
+        
+        # Add author info
+        author_label = QLabel("© 2026 zong307 | MIT License")
+        author_label.setAlignment(Qt.AlignCenter)
+        github_row.addWidget(author_label)
+        
+        github_row.addStretch()  # Right padding
+        
+        # Add the row to the main layout
+        self._main_layout.addLayout(github_row)
 
     # ==================================================================
     # Signal / Slot Wiring

@@ -239,11 +239,11 @@ class SubtitlePipeline:
                 translator = SubtitleTranslator(model_size=trans_cfg.get("model_size", "4b"))
                 translator.load_model()
                 
-                # Create translated SRT file path (add '_translated' suffix)
+                # Create translated SRT file path using target language code instead of '_translated'
                 base_path = os.path.splitext(srt_output)[0]
-                translated_srt_path = f"{base_path}_translated.srt"
+                target_language = trans_cfg.get("target_language", "translated")
+                translated_srt_path = f"{base_path}_{target_language}.srt"
                 
-                target_language = trans_cfg.get("target_language", "en")
                 source_language = trans_cfg.get("source_language", "auto")
                 translator.translate_subtitle_file(csv_output, translated_srt_path, target_language, source_language)
                 
