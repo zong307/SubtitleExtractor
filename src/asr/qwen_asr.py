@@ -118,23 +118,23 @@ class QwenASR(ASRBase):
         segments: list[TranscriptionSegment] = []
         for res in results:
             text = getattr(res, "text", "") or ""
-            text = text.strip()
+            text = text.strip("\n")
             if not text:
                 continue
 
             # Extract word-level timestamps if available
             words: list[WordTimestamp] = []
-            raw_timestamps = getattr(res, "timestamps", None) or getattr(
+            raw_timestamps = getattr(res, "time_stamps", None) or getattr(
                 res, "words", None
             )
-            if raw_timestamps:
-                for item in raw_timestamps:
+            if raw_timestamps and hasattr(raw_timestamps, "items"):
+                for item in raw_timestamps.items:
                     if isinstance(item, dict):
                         words.append(
                             WordTimestamp(
                                 word=item.get("word", item.get("text", "")).strip(),
-                                start=float(item.get("start", 0)),
-                                end=float(item.get("end", 0)),
+                                start=float(item.get("start_time", 0)),
+                                end=float(item.get("end_time", 0)),
                             )
                         )
                     elif hasattr(item, "word") or hasattr(item, "text"):
@@ -143,8 +143,8 @@ class QwenASR(ASRBase):
                                 word=getattr(
                                     item, "word", getattr(item, "text", "")
                                 ).strip(),
-                                start=float(getattr(item, "start", 0)),
-                                end=float(getattr(item, "end", 0)),
+                                start=float(getattr(item, "start_time", 0)),
+                                end=float(getattr(item, "end_time", 0)),
                             )
                         )
 
