@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import threading
+import traceback
 from typing import Callable, Optional
 
 from loguru import logger
@@ -228,6 +229,34 @@ class SubtitlePipeline:
         gen.export_csv(entries, csv_output)
         gen.export_srt(entries, srt_output)
 
+        # -- Step 8: Translate subtitles (optional) ------------------------------
+        trans_cfg = self._config.get("translation", {})
+        if trans_cfg.get("enabled", False):
+            self._check_cancelled()
+            self._progress("translation", 95, "正在翻译字幕...")
+            try:
+                from src.core.translator import SubtitleTranslator
+                translator = SubtitleTranslator(model_size=trans_cfg.get("model_size", "4b"))
+                translator.load_model()
+                
+                # Create translated SRT file path (add '_translated' suffix)
+                base_path = os.path.splitext(srt_output)[0]
+                translated_srt_path = f"{base_path}_translated.srt"
+                
+                target_language = trans_cfg.get("target_language", "en")
+                source_language = trans_cfg.get("source_language", "auto")
+                translator.translate_subtitle_file(csv_output, translated_srt_path, target_language, source_language)
+                
+                self._progress("translation", 98, "字幕翻译完成")
+                logger.info(f"Translated SRT saved to: {translated_srt_path}")
+            except Exception as e:
+                stack_trace = traceback.format_exc()
+                logger.error(f"Subtitle translation failed: {e}. Continuing without translation.")
+                logger.info(f"Traceback: {stack_trace}")
+                self._progress("translation", 98, "字幕翻译失败，继续处理")
+        else:
+            logger.info("Subtitle translation disabled, skipping.")
+        
         self._progress("done", 100, f"完成！共生成 {len(entries)} 条字幕")
         logger.info(f"CSV saved to: {csv_output}")
         logger.info(f"SRT saved to: {srt_output}")

@@ -167,6 +167,63 @@ class MainWindow(QMainWindow):
             "使用 CAM++ 模型自动识别不同说话人，并在字幕中标注说话人身份"
         )
         diar_layout.addWidget(self._enable_diarization)
+        
+        # Translation
+        self._enable_translation = QCheckBox("启用字幕翻译")
+        self._enable_translation.setToolTip(
+            "使用 translategemma 模型翻译字幕"
+        )
+        diar_layout.addWidget(self._enable_translation)
+        
+        # Translation options container (will be shown/hidden based on checkbox)
+        self._translation_options_widget = QWidget()
+        translation_options_layout = QVBoxLayout()
+        translation_options_layout.setContentsMargins(0, 0, 0, 0)
+        translation_options_layout.setSpacing(4)
+        
+        # Model size row
+        model_size_row = QHBoxLayout()
+        model_size_row.addWidget(QLabel("模型尺寸:"))
+        self._translation_model_size = QComboBox()
+        self._translation_model_size.addItems(["4b", "12b"])
+        self._translation_model_size.setCurrentText("4b")
+        self._translation_model_size.setToolTip("选择翻译模型规模")
+        model_size_row.addWidget(self._translation_model_size)
+        model_size_row.addStretch()
+        translation_options_layout.addLayout(model_size_row)
+        
+        # Source language row
+        source_lang_row = QHBoxLayout()
+        source_lang_row.addWidget(QLabel("原文语言:"))
+        self._translation_source_lang = QComboBox()
+        self._translation_source_lang.addItems([
+            "英语 (en)", "中文 (zh)", "日语 (ja)", "韩语 (ko)", "法语 (fr)",
+            "德语 (de)", "西班牙语 (es)", "俄语 (ru)", "阿拉伯语 (ar)"
+        ])
+        self._translation_source_lang.setCurrentText("中文 (zh)")
+        self._translation_source_lang.setToolTip("选择翻译源语言")
+        source_lang_row.addWidget(self._translation_source_lang)
+        source_lang_row.addStretch()
+        translation_options_layout.addLayout(source_lang_row)
+        
+        # Target language row
+        target_lang_row = QHBoxLayout()
+        target_lang_row.addWidget(QLabel("译文语言:"))
+        self._translation_target_lang = QComboBox()
+        self._translation_target_lang.addItems([
+            "英语 (en)", "中文 (zh)", "日语 (ja)", "韩语 (ko)", "法语 (fr)",
+            "德语 (de)", "西班牙语 (es)", "俄语 (ru)", "阿拉伯语 (ar)"
+        ])
+        self._translation_target_lang.setCurrentText("英语 (en)")
+        self._translation_target_lang.setToolTip("选择翻译目标语言")
+        target_lang_row.addWidget(self._translation_target_lang)
+        target_lang_row.addStretch()
+        translation_options_layout.addLayout(target_lang_row)
+        
+        self._translation_options_widget.setLayout(translation_options_layout)
+        self._translation_options_widget.setVisible(False)  # Initially hidden
+        diar_layout.addWidget(self._translation_options_widget)
+        
         diar_layout.addStretch()
         diar_group.setLayout(diar_layout)
         row.addWidget(diar_group, 1)
@@ -359,13 +416,22 @@ class MainWindow(QMainWindow):
         self._model_size_combo.currentIndexChanged.connect(self._auto_save)
         self._device_combo.currentIndexChanged.connect(self._auto_save)
         self._enable_diarization.stateChanged.connect(self._auto_save)
+        self._enable_translation.stateChanged.connect(self._auto_save)
+        self._translation_target_lang.currentTextChanged.connect(self._auto_save)
+        self._translation_model_size.currentTextChanged.connect(self._auto_save)
+        self._translation_source_lang.currentTextChanged.connect(self._auto_save)
         self._language_combo.currentIndexChanged.connect(self._auto_save)
+        # Connect ASR target language change to sync with translation source language
+        self._language_combo.currentIndexChanged.connect(self._sync_asr_language_to_translation)
         self._vad_threshold.valueChanged.connect(self._auto_save)
         self._silence_delay.valueChanged.connect(self._auto_save)
         self._padding_spin.valueChanged.connect(self._auto_save)
         self._max_chars.valueChanged.connect(self._auto_save)
         self._max_speech_duration.valueChanged.connect(self._auto_save)
         self._model_dir_input.editingFinished.connect(self._auto_save)
+        
+        # Enable/disable translation UI elements based on checkbox
+        self._enable_translation.stateChanged.connect(self._toggle_translation_options)
 
     # ==================================================================
     # Slots
@@ -513,6 +579,36 @@ class MainWindow(QMainWindow):
                 f.write(self._log_viewer.toPlainText())
             logger.info(f"日志已导出至: {path}")
 
+    def _toggle_translation_options(self, state):
+        """Show or hide translation options based on checkbox state."""
+        enabled = bool(state)
+        self._translation_options_widget.setVisible(enabled)
+
+    def _sync_asr_language_to_translation(self):
+        """Sync the ASR target language to translation source language when changed."""
+        # Get the current ASR target language
+        asr_lang_code = self._language_combo.currentData()
+        
+        # Convert the language code to display text
+        lang_display_map = {
+            "en": "英语 (en)",
+            "zh": "中文 (zh)",
+            "ja": "日语 (ja)",
+            "ko": "韩语 (ko)",
+            "fr": "法语 (fr)",
+            "de": "德语 (de)",
+            "es": "西班牙语 (es)",
+            "ru": "俄语 (ru)",
+            "ar": "阿拉伯语 (ar)"
+        }
+        
+        asr_lang_display = lang_display_map.get(asr_lang_code, "中文 (zh)")
+        
+        # Find and set the corresponding index in the translation source language combo
+        source_idx = self._translation_source_lang.findText(asr_lang_display)
+        if source_idx >= 0:
+            self._translation_source_lang.setCurrentIndex(source_idx)
+
     def _reset_settings(self) -> None:
         reply = QMessageBox.question(
             self,
@@ -569,7 +665,44 @@ class MainWindow(QMainWindow):
 
         # Diarization
         self._enable_diarization.setChecked(s.get("diarization.enabled", False))
-
+        
+        # Translation
+        self._enable_translation.setChecked(s.get("translation.enabled", False))
+        
+        # Set translation target language
+        target_lang = s.get("translation.target_language", "en")
+        lang_display_map = {
+            "en": "英语 (en)",
+            "zh": "中文 (zh)",
+            "ja": "日语 (ja)",
+            "ko": "韩语 (ko)",
+            "fr": "法语 (fr)",
+            "de": "德语 (de)",
+            "es": "西班牙语 (es)",
+            "ru": "俄语 (ru)",
+            "ar": "阿拉伯语 (ar)"
+        }
+        target_lang_display = lang_display_map.get(target_lang, "英语 (en)")
+        target_idx = self._translation_target_lang.findText(target_lang_display)
+        if target_idx >= 0:
+            self._translation_target_lang.setCurrentIndex(target_idx)
+        
+        # Set translation source language
+        source_lang = s.get("translation.source_language", "zh")
+        source_lang_display = lang_display_map.get(source_lang, "中文 (zh)")
+        source_idx = self._translation_source_lang.findText(source_lang_display)
+        if source_idx >= 0:
+            self._translation_source_lang.setCurrentIndex(source_idx)
+        
+        # Set translation model size
+        model_size = s.get("translation.model_size", "4b")
+        size_idx = self._translation_model_size.findText(model_size)
+        if size_idx >= 0:
+            self._translation_model_size.setCurrentIndex(size_idx)
+        
+        # Update UI state based on translation setting
+        self._toggle_translation_options(self._enable_translation.isChecked())
+        
         # Paths
         self._model_dir_input.setText(s.get("paths.model_dir", ""))
 
@@ -586,11 +719,44 @@ class MainWindow(QMainWindow):
         s.set("audio.padding_seconds", self._padding_spin.value())
         s.set("subtitle.max_chars_per_subtitle", self._max_chars.value())
         s.set("diarization.enabled", self._enable_diarization.isChecked())
+        s.set("translation.enabled", self._enable_translation.isChecked())
+        
+        # Map UI language selection to language code
+        lang_text = self._translation_target_lang.currentText()
+        lang_code = lang_text.split('(')[-1].replace(')', '')  # Extract code from "English (en)"
+        s.set("translation.target_language", lang_code)
+        
+        # Map UI source language selection to language code
+        source_lang_text = self._translation_source_lang.currentText()
+        source_lang_code = source_lang_text.split('(')[-1].replace(')', '')  # Extract code from "English (en)"
+        s.set("translation.source_language", source_lang_code)
+        
+        s.set("translation.model_size", self._translation_model_size.currentText())
+        
         s.set("paths.model_dir", self._model_dir_input.text().strip())
 
     def _collect_config(self) -> dict:
         """Build the pipeline config dict from current UI values."""
-        return self._settings.get_all()
+        # Get current settings as base
+        config = self._settings.get_all()
+        
+        # Override with current UI values to ensure latest state is captured
+        config['diarization']['enabled'] = self._enable_diarization.isChecked()
+        config['translation']['enabled'] = self._enable_translation.isChecked()
+        
+        # Map UI language selection to language code
+        lang_text = self._translation_target_lang.currentText()
+        lang_code = lang_text.split('(')[-1].replace(')', '')  # Extract code from "English (en)"
+        config['translation']['target_language'] = lang_code
+        
+        # Map UI source language selection to language code
+        source_lang_text = self._translation_source_lang.currentText()
+        source_lang_code = source_lang_text.split('(')[-1].replace(')', '')  # Extract code from "English (en)"
+        config['translation']['source_language'] = source_lang_code
+        
+        config['translation']['model_size'] = self._translation_model_size.currentText()
+        
+        return config
 
     # ==================================================================
     # Helpers

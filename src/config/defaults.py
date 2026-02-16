@@ -28,6 +28,11 @@ DEFAULTS: dict = {
     "paths": {
         "model_dir": "",  # empty = use each library's default cache
     },
+    "translation": {
+        "enabled": False,
+        "target_language": "en",
+        "model_size": "4b",
+    },
 }
 
 # Languages supported for UI display (code -> display name)
