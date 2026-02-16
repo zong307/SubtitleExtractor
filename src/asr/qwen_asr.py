@@ -48,6 +48,21 @@ class QwenASR(ASRBase):
     def load_model(self) -> None:
         import torch
         from qwen_asr import Qwen3ASRModel
+        
+        # Set HuggingFace endpoint if configured
+        import os
+        from src.config.settings import SettingsManager
+        settings = SettingsManager()
+        hf_endpoint = settings.get("huggingface.endpoint", "")
+        
+        if hf_endpoint:
+            # Set the HF endpoint environment variable
+            os.environ['HF_ENDPOINT'] = hf_endpoint
+            logger.info(f"Using HuggingFace endpoint: {hf_endpoint}")
+        else:
+            # Remove the environment variable if it exists
+            if 'HF_ENDPOINT' in os.environ:
+                del os.environ['HF_ENDPOINT']
 
         model_id = _MODEL_MAP.get(self.model_size)
         if model_id is None:

@@ -85,6 +85,14 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
 
+        # Create menu bar
+        menubar = self.menuBar()
+        options_menu = menubar.addMenu('选项')
+        
+        # Add HuggingFace endpoint submenu
+        hf_endpoint_action = options_menu.addAction('HuggingFace endpoint')
+        hf_endpoint_action.triggered.connect(self._show_hf_endpoint_dialog)
+        
         # Scroll area for the whole content
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -197,7 +205,7 @@ class MainWindow(QMainWindow):
         source_lang_row.addWidget(QLabel("原文语言:"))
         self._translation_source_lang = QComboBox()
         self._translation_source_lang.addItems([
-            "英语 (en)", "中文 (zh)", "日语 (ja)", "韩语 (ko)", "法语 (fr)",
+            "英语 (en)", "中文 (zh)", "日语 (ja)", "朝鲜语 (ko)", "法语 (fr)",
             "德语 (de)", "西班牙语 (es)", "俄语 (ru)", "阿拉伯语 (ar)"
         ])
         self._translation_source_lang.setCurrentText("中文 (zh)")
@@ -211,7 +219,7 @@ class MainWindow(QMainWindow):
         target_lang_row.addWidget(QLabel("译文语言:"))
         self._translation_target_lang = QComboBox()
         self._translation_target_lang.addItems([
-            "英语 (en)", "中文 (zh)", "日语 (ja)", "韩语 (ko)", "法语 (fr)",
+            "英语 (en)", "中文 (zh)", "日语 (ja)", "朝鲜语 (ko)", "法语 (fr)",
             "德语 (de)", "西班牙语 (es)", "俄语 (ru)", "阿拉伯语 (ar)"
         ])
         self._translation_target_lang.setCurrentText("英语 (en)")
@@ -594,7 +602,7 @@ class MainWindow(QMainWindow):
             "en": "英语 (en)",
             "zh": "中文 (zh)",
             "ja": "日语 (ja)",
-            "ko": "韩语 (ko)",
+            "ko": "朝鲜语 (ko)",
             "fr": "法语 (fr)",
             "de": "德语 (de)",
             "es": "西班牙语 (es)",
@@ -675,7 +683,7 @@ class MainWindow(QMainWindow):
             "en": "英语 (en)",
             "zh": "中文 (zh)",
             "ja": "日语 (ja)",
-            "ko": "韩语 (ko)",
+            "ko": "朝鲜语 (ko)",
             "fr": "法语 (fr)",
             "de": "德语 (de)",
             "es": "西班牙语 (es)",
@@ -705,6 +713,8 @@ class MainWindow(QMainWindow):
         
         # Paths
         self._model_dir_input.setText(s.get("paths.model_dir", ""))
+        
+        # HuggingFace endpoint - currently no UI element to load this setting to since it's in a dialog
 
     def _auto_save(self) -> None:
         """Persist current UI state to settings file."""
@@ -734,6 +744,8 @@ class MainWindow(QMainWindow):
         s.set("translation.model_size", self._translation_model_size.currentText())
         
         s.set("paths.model_dir", self._model_dir_input.text().strip())
+        
+        # HuggingFace endpoint is managed through the dialog, not auto-saved from UI elements
 
     def _collect_config(self) -> dict:
         """Build the pipeline config dict from current UI values."""
@@ -755,6 +767,9 @@ class MainWindow(QMainWindow):
         config['translation']['source_language'] = source_lang_code
         
         config['translation']['model_size'] = self._translation_model_size.currentText()
+        
+        # Ensure huggingface endpoint is included in the config
+        config['huggingface']['endpoint'] = self._settings.get("huggingface.endpoint", "")
         
         return config
 
@@ -782,8 +797,18 @@ class MainWindow(QMainWindow):
         self._model_dir_input.setEnabled(enabled)
         self._browse_model_dir_btn.setEnabled(enabled)
         self._reset_btn.setEnabled(enabled)
+        
+        # Enable translation-related widgets
+        self._enable_translation.setEnabled(enabled)
+        self._translation_model_size.setEnabled(enabled)
+        self._translation_source_lang.setEnabled(enabled)
+        self._translation_target_lang.setEnabled(enabled)
+        
         if not enabled:
             self._status_label.setStyleSheet("font-weight: bold; color: #E0E0E0;")
+        
+        # 日志输出部分的按钮始终可用，所以不需要改变它们的状态
+        # self._clear_log_btn 和 self._export_log_btn 始终保持启用状态
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._auto_save()
@@ -802,3 +827,123 @@ class MainWindow(QMainWindow):
             self._worker.cancel()
             self._worker.wait(5000)
         event.accept()
+
+    def _show_hf_endpoint_dialog(self) -> None:
+        """Show dialog to configure HuggingFace endpoint."""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QPushButton, QLabel, QLineEdit, QDialogButtonBox
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("HuggingFace Endpoint 设置")
+        dialog.resize(400, 120)
+        
+        layout = QVBoxLayout()
+        
+        # Label
+        label = QLabel("请选择 HuggingFace 镜像地址:")
+        layout.addWidget(label)
+        
+        # ComboBox for predefined options
+        combo_layout = QHBoxLayout()
+        combo_label = QLabel("预设选项:")
+        self._hf_endpoint_combo = QComboBox()
+        self._hf_endpoint_combo.addItems([
+            "官网默认", 
+            "大陆代理 (https://hf-mirror.com)",
+            "自定义"
+        ])
+        
+        # Load current setting to determine combo box selection
+        current_endpoint = self._settings.get("huggingface.endpoint", "")
+        if current_endpoint == "":
+            self._hf_endpoint_combo.setCurrentIndex(0)  # 官网默认
+        elif current_endpoint == "https://hf-mirror.com":
+            self._hf_endpoint_combo.setCurrentIndex(1)  # 大陆代理
+        else:
+            self._hf_endpoint_combo.setCurrentIndex(2)  # 自定义
+        
+        combo_layout.addWidget(combo_label)
+        combo_layout.addWidget(self._hf_endpoint_combo, 1)
+        layout.addLayout(combo_layout)
+        
+        # Custom URL input (initially hidden)
+        custom_layout = QHBoxLayout()
+        custom_label = QLabel("自定义地址:")
+        self._custom_endpoint_input = QLineEdit()
+        self._custom_endpoint_input.setText(current_endpoint if current_endpoint not in ["", "https://hf-mirror.com"] else "")
+        self._custom_endpoint_input.setPlaceholderText("请输入自定义 HuggingFace 镜像地址")
+        
+        custom_layout.addWidget(custom_label)
+        custom_layout.addWidget(self._custom_endpoint_input, 1)
+        
+        # Show custom input only if current selection is custom
+        self._custom_endpoint_input.setVisible(self._hf_endpoint_combo.currentIndex() == 2)
+        
+        layout.addLayout(custom_layout)
+        
+        # Connect combo box change signal to show/hide custom input
+        self._hf_endpoint_combo.currentTextChanged.connect(
+            lambda text: self._custom_endpoint_input.setVisible(text == "自定义")
+        )
+        
+        # Buttons
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        
+        dialog.setLayout(layout)
+        
+        if dialog.exec_() == QDialog.Accepted:
+            # Save the selected endpoint
+            selected_option = self._hf_endpoint_combo.currentText()
+            if selected_option == "官网默认":
+                endpoint = ""
+            elif selected_option == "大陆代理 (https://hf-mirror.com)":
+                endpoint = "https://hf-mirror.com"
+            else:  # 自定义
+                endpoint = self._custom_endpoint_input.text().strip()
+                # If custom endpoint is not empty, add it to the combo options
+                if endpoint and endpoint not in ["", "https://hf-mirror.com"]:
+                    # In a real implementation, we might want to store custom endpoints
+                    # but for this implementation we just save the endpoint value
+                    pass
+            
+            self._settings.set("huggingface.endpoint", endpoint)
+            logger.info(f"HuggingFace endpoint 已设置为: {endpoint or '官网默认'}")
+
+    def _connect_signals(self) -> None:
+        # Buttons
+        self._browse_input_btn.clicked.connect(self._browse_input_file)
+        self._browse_csv_btn.clicked.connect(lambda: self._browse_save_file("csv"))
+        self._browse_srt_btn.clicked.connect(lambda: self._browse_save_file("srt"))
+        self._browse_model_dir_btn.clicked.connect(self._browse_model_dir)
+        self._start_btn.clicked.connect(self._start_processing)
+        self._stop_btn.clicked.connect(self._stop_processing)
+        self._clear_log_btn.clicked.connect(self._log_viewer.clear)
+        self._export_log_btn.clicked.connect(self._export_log)
+        self._reset_btn.clicked.connect(self._reset_settings)
+
+        # ASR type change -> update model size options
+        self._asr_type_combo.currentIndexChanged.connect(self._update_model_sizes)
+
+        # Auto-save on any change
+        self._asr_type_combo.currentIndexChanged.connect(self._auto_save)
+        self._model_size_combo.currentIndexChanged.connect(self._auto_save)
+        self._device_combo.currentIndexChanged.connect(self._auto_save)
+        self._enable_diarization.stateChanged.connect(self._auto_save)
+        self._enable_translation.stateChanged.connect(self._auto_save)
+        self._translation_target_lang.currentTextChanged.connect(self._auto_save)
+        self._translation_model_size.currentTextChanged.connect(self._auto_save)
+        self._translation_source_lang.currentTextChanged.connect(self._auto_save)
+        self._language_combo.currentIndexChanged.connect(self._auto_save)
+        # Connect ASR target language change to sync with translation source language
+        self._language_combo.currentIndexChanged.connect(self._sync_asr_language_to_translation)
+        self._vad_threshold.valueChanged.connect(self._auto_save)
+        self._silence_delay.valueChanged.connect(self._auto_save)
+        self._padding_spin.valueChanged.connect(self._auto_save)
+        self._max_chars.valueChanged.connect(self._auto_save)
+        self._max_speech_duration.valueChanged.connect(self._auto_save)
+        self._model_dir_input.editingFinished.connect(self._auto_save)
+        
+        # Enable/disable translation UI elements based on checkbox
+        self._enable_translation.stateChanged.connect(self._toggle_translation_options)

@@ -33,13 +33,21 @@ DEFAULTS: dict = {
         "target_language": "en",
         "model_size": "4b",
     },
+    "huggingface": {
+        "endpoint": "",  # Default: use official, "" means official
+    },
 }
 
 # Languages supported for UI display (code -> display name)
 LANGUAGES: dict[str, str] = {
-    "zh": "中文",
-    "en": "English",
-    "ja": "日本語",
-    "ko": "한국어",
+    "zh": "中文 (zh)",
+    "en": "英语 (en)",
+    "ja": "日语 (ja)",
+    "ko": "朝鲜语 (ko)",
+    "fr": "法语 (fr)",
+    "de": "德语 (de)",
+    "es": "西班牙语 (es)",
+    "ru": "俄语 (ru)",
+    "ar": "阿拉伯语 (ar)",
     "auto": "自动检测",
 }
