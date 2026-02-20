@@ -163,6 +163,7 @@ class SubtitlePipeline:
             model_size=asr_cfg.get("model_size", "turbo"),
             device=asr_cfg.get("device", "cpu"),
             model_dir=model_dir,
+            config=self._config,
         )
         asr_engine.load_model()
         self._progress("asr", 25, "ASR 模型加载完成，开始识别...")

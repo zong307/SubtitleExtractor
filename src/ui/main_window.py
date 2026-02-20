@@ -941,7 +941,50 @@ class MainWindow(QMainWindow):
                     pass
             
             self._settings.set("huggingface.endpoint", endpoint)
-            logger.info(f"HuggingFace endpoint 已设置为: {endpoint or '官网默认'}")
+            
+            # Update the environment variable immediately so it takes effect for future operations
+            import os
+            if endpoint:
+                os.environ['HF_ENDPOINT'] = endpoint
+                logger.info(f"Using HuggingFace endpoint: {endpoint}")
+                # Inform user that they may need to restart the app for the change to take full effect
+                from PyQt5.QtWidgets import QMessageBox
+                reply = QMessageBox.question(
+                    self,
+                    "HuggingFace Endpoint 已更新",
+                    "HuggingFace endpoint 已设置为: {}\n\n为了确保更改完全生效，建议重新启动应用程序。\n\n现在重启吗？".format(endpoint),
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+                if reply == QMessageBox.Yes:
+                    self.restart_application()
+            else:
+                # Remove the environment variable if it exists
+                if 'HF_ENDPOINT' in os.environ:
+                    del os.environ['HF_ENDPOINT']
+                logger.info("HuggingFace endpoint 已设置为: 官网默认")
+                # Inform user that they may need to restart the app for the change to take full effect
+                from PyQt5.QtWidgets import QMessageBox
+                reply = QMessageBox.question(
+                    self,
+                    "HuggingFace Endpoint 已更新",
+                    "HuggingFace endpoint 已设置为: 官网默认\n\n为了确保更改完全生效，建议重新启动应用程序。\n\n现在重启吗？",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+                if reply == QMessageBox.Yes:
+                    self.restart_application()
+
+    def restart_application(self):
+        """Restart the application to apply environment variable changes."""
+        import sys
+        import os
+        from PyQt5.QtWidgets import QApplication
+        
+        # Close the current application and restart
+        QApplication.quit()
+        # Restart the application with the same arguments
+        os.execv(sys.executable, ['python'] + sys.argv)
 
     def _connect_signals(self) -> None:
         # Buttons

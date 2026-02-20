@@ -28,20 +28,11 @@ class WhisperASR(ASRBase):
     def load_model(self) -> None:
         import whisper
         import os
-        from src.config.settings import SettingsManager
         
-        # Set HuggingFace endpoint if configured (for models that might depend on HF)
-        settings = SettingsManager()
-        hf_endpoint = settings.get("huggingface.endpoint", "")
-        
-        if hf_endpoint:
-            # Set the HF endpoint environment variable
-            os.environ['HF_ENDPOINT'] = hf_endpoint
-            logger.info(f"Using HuggingFace endpoint: {hf_endpoint}")
-        else:
-            # Remove the environment variable if it exists
-            if 'HF_ENDPOINT' in os.environ:
-                del os.environ['HF_ENDPOINT']
+        # The HF_ENDPOINT environment variable should already be set at application startup
+        # and when user changes the setting, so we just log the current value
+        current_endpoint = os.environ.get('HF_ENDPOINT', 'Official HuggingFace endpoint')
+        logger.info(f"Using HuggingFace endpoint: {current_endpoint}")
 
         logger.info(f"Loading Whisper model '{self.model_size}' on {self.device}...")
         kwargs: dict = {"name": self.model_size, "device": self.device}

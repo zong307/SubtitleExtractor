@@ -33,8 +33,8 @@ _ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B"
 class QwenASR(ASRBase):
     """ASR backend using Qwen3-ASR from Alibaba."""
 
-    def __init__(self, model_size: str, device: str = "cpu", model_dir: str | None = None) -> None:
-        super().__init__(model_size, device, model_dir)
+    def __init__(self, model_size: str, device: str = "cpu", model_dir: str | None = None, config: dict | None = None) -> None:
+        super().__init__(model_size, device, model_dir, config)
         self._has_aligner = False
 
     @classmethod
@@ -49,21 +49,12 @@ class QwenASR(ASRBase):
         import torch
         from qwen_asr import Qwen3ASRModel
         
-        # Set HuggingFace endpoint if configured
+        # The HF_ENDPOINT environment variable should already be set at application startup
+        # and when user changes the setting, so we just log the current value
         import os
-        from src.config.settings import SettingsManager
-        settings = SettingsManager()
-        hf_endpoint = settings.get("huggingface.endpoint", "")
+        current_endpoint = os.environ.get('HF_ENDPOINT', 'Official HuggingFace endpoint')
+        logger.info(f"Using HuggingFace endpoint: {current_endpoint}")
         
-        if hf_endpoint:
-            # Set the HF endpoint environment variable
-            os.environ['HF_ENDPOINT'] = hf_endpoint
-            logger.info(f"Using HuggingFace endpoint: {hf_endpoint}")
-        else:
-            # Remove the environment variable if it exists
-            if 'HF_ENDPOINT' in os.environ:
-                del os.environ['HF_ENDPOINT']
-
         model_id = _MODEL_MAP.get(self.model_size)
         if model_id is None:
             raise ValueError(

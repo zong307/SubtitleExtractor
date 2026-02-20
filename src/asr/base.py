@@ -22,10 +22,12 @@ class ASRBase(ABC):
         model_size: str,
         device: str = "cpu",
         model_dir: Optional[str] = None,
+        config: Optional[dict] = None,
     ) -> None:
         self.model_size = model_size
         self.device = device
         self.model_dir = model_dir
+        self.config = config or {}
         self._model = None
 
     @abstractmethod

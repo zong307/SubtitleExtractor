@@ -30,6 +30,7 @@ class ASRRegistry:
         model_size: str,
         device: str = "cpu",
         model_dir: Optional[str] = None,
+        config: Optional[dict] = None,
     ) -> ASRBase:
         """Instantiate an ASR backend by its registered name."""
         key = asr_type.lower()
@@ -42,6 +43,7 @@ class ASRRegistry:
             model_size=model_size,
             device=device,
             model_dir=model_dir,
+            config=config,
         )
 
     @classmethod
