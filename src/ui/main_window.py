@@ -417,7 +417,7 @@ class MainWindow(QMainWindow):
         github_clickable_label = QLabel()
         github_clickable_label.setPixmap(github_svg_widget.grab())  # Grab the rendered SVG as pixmap
         github_clickable_label.setCursor(Qt.PointingHandCursor)  # Set cursor to hand pointer
-        github_clickable_label.mousePressEvent = lambda event: QDesktopServices.openUrl(QUrl("https://github.com/zong307/SubtitleExtractor"))
+        github_clickable_label.mousePressEvent = lambda event: self._open_github_link()
         
         # Add the clickable GitHub logo to the layout
         github_row.addWidget(github_clickable_label)
@@ -431,6 +431,12 @@ class MainWindow(QMainWindow):
         
         # Add the row to the main layout
         self._main_layout.addLayout(github_row)
+    
+    def _open_github_link(self):
+        """Open the GitHub repository link in the default browser."""
+        from PyQt5.QtCore import QUrl
+        from PyQt5.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl("https://github.com/zong307/SubtitleExtractor"))
 
     # ==================================================================
     # Signal / Slot Wiring
