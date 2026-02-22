@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from loguru import logger
-from PyQt5.QtCore import Qt, pyqtSlot, QUrl
+from PyQt5.QtCore import Qt, pyqtSlot, QUrl, QThread, pyqtSignal
 from PyQt5.QtGui import QPixmap, QIcon, QDesktopServices
 from PyQt5.QtSvg import QSvgWidget  # Import SVG support
 from PyQt5.QtWidgets import (
@@ -54,6 +54,27 @@ _LOG_COLORS = {
 }
 
 
+class HFTokenValidationThread(QThread):
+    """Thread for validating HuggingFace token in the background."""
+    validation_result = pyqtSignal(bool)  # True for valid, False for invalid
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.token_valid = False
+    
+    def run(self):
+        """Run the token validation in the background thread."""
+        try:
+            from huggingface_hub import whoami
+            user_info = whoami()  # This will succeed if token is valid
+            self.token_valid = True
+        except Exception as e:
+            logger.error(f"HuggingFace token validation failed: {e}")
+            self.token_valid = False
+        
+        self.validation_result.emit(self.token_valid)
+
+
 class MainWindow(QMainWindow):
     """Top-level application window."""
 
@@ -94,6 +115,10 @@ class MainWindow(QMainWindow):
         # Add HuggingFace endpoint submenu
         hf_endpoint_action = options_menu.addAction('HuggingFace endpoint')
         hf_endpoint_action.triggered.connect(self._show_hf_endpoint_dialog)
+        
+        # Add HuggingFace token submenu
+        hf_token_action = options_menu.addAction('HuggingFace Token')
+        hf_token_action.triggered.connect(self._show_hf_token_dialog)
         
         # Scroll area for the whole content
         scroll = QScrollArea()
@@ -442,6 +467,56 @@ class MainWindow(QMainWindow):
     # Signal / Slot Wiring
     # ==================================================================
 
+    def _check_translation_token_before_toggle(self, state):
+        """Check if HF token exists before enabling translation, prompt if needed."""
+        if state:  # If trying to enable translation
+            # Immediately update UI to show the user's selection
+            self._toggle_translation_options(state)
+            
+            # Start background validation in a separate thread
+            self._validate_token_in_background()
+        else:
+            # Disabling translation, just toggle the UI
+            self._toggle_translation_options(state)
+
+    def _validate_token_in_background(self):
+        """Validate HF token in a background thread and handle invalid tokens."""
+        # Create and start the validation thread
+        self._validation_thread = HFTokenValidationThread(self)
+        self._validation_thread.validation_result.connect(self._handle_token_validation_result)
+        self._validation_thread.start()
+
+    def _handle_token_validation_result(self, is_valid):
+        """Handle the result from the background token validation."""
+        if not is_valid:
+            # Token is invalid, show warning and uncheck the checkbox
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self,
+                "验证失败",
+                "当前的 HuggingFace Token 无效或已过期，请重新设置。"
+            )
+            # Uncheck the translation checkbox
+            self._enable_translation.blockSignals(True)
+            self._enable_translation.setChecked(False)
+            self._enable_translation.blockSignals(False)
+            # Hide the translation options
+            self._toggle_translation_options(False)
+            # Prompt user to re-enter token
+            self._show_hf_token_dialog()
+
+    def _validate_hf_token_for_user(self) -> bool:
+        """Validate that the currently logged in user's token works."""
+        try:
+            from huggingface_hub import whoami
+            # Test the currently logged in user
+            user_info = whoami()
+            logger.info(f"HuggingFace token validation successful for user: {user_info['name']}")
+            return True
+        except Exception as e:
+            logger.error(f"HuggingFace token validation failed: {e}")
+            return False
+
     def _connect_signals(self) -> None:
         # Buttons
         self._browse_input_btn.clicked.connect(self._browse_input_file)
@@ -477,7 +552,7 @@ class MainWindow(QMainWindow):
         self._model_dir_input.editingFinished.connect(self._auto_save)
         
         # Enable/disable translation UI elements based on checkbox
-        self._enable_translation.stateChanged.connect(self._toggle_translation_options)
+        self._enable_translation.stateChanged.connect(self._check_translation_token_before_toggle)
 
     # ==================================================================
     # Slots
@@ -866,6 +941,38 @@ class MainWindow(QMainWindow):
             self._worker.wait(5000)
         event.accept()
 
+    def _validate_hf_token(self, token: str) -> bool:
+        """Validate the given HF token by attempting to get user info."""
+        try:
+            from huggingface_hub import whoami
+            # Test the token by trying to get user info
+            user_info = whoami(token=token)
+            logger.info(f"HuggingFace token validation successful for user: {user_info['name']}")
+            return True
+        except Exception as e:
+            logger.error(f"HuggingFace token validation failed: {e}")
+            return False
+
+    def _get_current_hf_token_status(self) -> str:
+        """Check if user is currently logged in to HuggingFace Hub."""
+        try:
+            from huggingface_hub import whoami
+            user_info = whoami()
+            # Return a dummy string to indicate user is logged in
+            return "logged_in"  # We don't return the actual token for security
+        except:
+            return ""  # Not logged in
+
+    def _perform_hf_login(self, token: str) -> bool:
+        """Perform login to HuggingFace Hub with the provided token."""
+        try:
+            from huggingface_hub import login
+            login(token=token)
+            return True  # Login successful
+        except Exception as e:
+            logger.error(f"HuggingFace login failed: {e}")
+            return False  # Login failed
+
     def _show_hf_endpoint_dialog(self) -> None:
         """Show dialog to configure HuggingFace endpoint."""
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QPushButton, QLabel, QLineEdit, QDialogButtonBox
@@ -981,6 +1088,82 @@ class MainWindow(QMainWindow):
                 if reply == QMessageBox.Yes:
                     self.restart_application()
 
+    def _show_hf_token_dialog(self) -> None:
+        """Show dialog to configure HuggingFace token."""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QDialogButtonBox
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("HuggingFace Token 设置")
+        dialog.resize(500, 120)
+        
+        layout = QVBoxLayout()
+        
+        # Label
+        label = QLabel("请输入您的 HuggingFace 访问令牌:")
+        layout.addWidget(label)
+        
+        # Token input
+        token_layout = QHBoxLayout()
+        token_label = QLabel("Token:")
+        self._hf_token_input = QLineEdit()
+        self._hf_token_input.setPlaceholderText("hf_...")
+        self._hf_token_input.setEchoMode(QLineEdit.Password)  # Mask the token input
+        
+        token_layout.addWidget(token_label)
+        token_layout.addWidget(self._hf_token_input, 1)
+        layout.addLayout(token_layout)
+        
+        # Check if we already have a stored token in Hugging Face Hub
+        try:
+            from huggingface_hub import whoami
+            user_info = whoami()  # This will succeed if token is already set
+            self._hf_token_input.setPlaceholderText(f"Token 已登录为: {user_info['name']} (重新输入以更换)")
+        except:
+            self._hf_token_input.setPlaceholderText("hf_xxx")
+        
+        # Buttons
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        
+        dialog.setLayout(layout)
+        
+        if dialog.exec_() == QDialog.Accepted:
+            token = self._hf_token_input.text().strip()
+            
+            if token:
+                # Perform the login to store the token for future API calls using HF Hub's built-in mechanism
+                login_success = self._perform_hf_login(token)
+                
+                if login_success:
+                    logger.info("HuggingFace token 已设置并登录成功")
+                    from PyQt5.QtWidgets import QMessageBox
+                    QMessageBox.information(
+                        self,
+                        "登录成功",
+                        f"HuggingFace token 已设置并登录成功！用户: {token[:8]}***"
+                    )
+                else:
+                    logger.warning("HuggingFace token 登录失败")
+                    from PyQt5.QtWidgets import QMessageBox
+                    QMessageBox.warning(
+                        self,
+                        "登录失败",
+                        "提供的 HuggingFace token 无法登录，请检查是否正确。"
+                    )
+            else:
+                # Logout from Hugging Face Hub using HF Hub's built-in mechanism
+                from huggingface_hub import logout
+                logout()
+                logger.info("已从 HuggingFace Hub 登出")
+                from PyQt5.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self,
+                    "登出成功",
+                    "已成功从 HuggingFace Hub 登出。"
+                )
+
     def restart_application(self):
         """Restart the application to apply environment variable changes."""
         import sys
@@ -992,39 +1175,3 @@ class MainWindow(QMainWindow):
         # Restart the application with the same arguments
         os.execv(sys.executable, ['python'] + sys.argv)
 
-    def _connect_signals(self) -> None:
-        # Buttons
-        self._browse_input_btn.clicked.connect(self._browse_input_file)
-        self._browse_csv_btn.clicked.connect(lambda: self._browse_save_file("csv"))
-        self._browse_srt_btn.clicked.connect(lambda: self._browse_save_file("srt"))
-        self._browse_model_dir_btn.clicked.connect(self._browse_model_dir)
-        self._start_btn.clicked.connect(self._start_processing)
-        self._stop_btn.clicked.connect(self._stop_processing)
-        self._clear_log_btn.clicked.connect(self._log_viewer.clear)
-        self._export_log_btn.clicked.connect(self._export_log)
-        self._reset_btn.clicked.connect(self._reset_settings)
-
-        # ASR type change -> update model size options
-        self._asr_type_combo.currentIndexChanged.connect(self._update_model_sizes)
-
-        # Auto-save on any change
-        self._asr_type_combo.currentIndexChanged.connect(self._auto_save)
-        self._model_size_combo.currentIndexChanged.connect(self._auto_save)
-        self._device_combo.currentIndexChanged.connect(self._auto_save)
-        self._enable_diarization.stateChanged.connect(self._auto_save)
-        self._enable_translation.stateChanged.connect(self._auto_save)
-        self._translation_target_lang.currentTextChanged.connect(self._auto_save)
-        self._translation_model_size.currentTextChanged.connect(self._auto_save)
-        self._translation_source_lang.currentTextChanged.connect(self._auto_save)
-        self._language_combo.currentIndexChanged.connect(self._auto_save)
-        # Connect ASR target language change to sync with translation source language
-        self._language_combo.currentIndexChanged.connect(self._sync_asr_language_to_translation)
-        self._vad_threshold.valueChanged.connect(self._auto_save)
-        self._silence_delay.valueChanged.connect(self._auto_save)
-        self._padding_spin.valueChanged.connect(self._auto_save)
-        self._max_chars.valueChanged.connect(self._auto_save)
-        self._max_speech_duration.valueChanged.connect(self._auto_save)
-        self._model_dir_input.editingFinished.connect(self._auto_save)
-        
-        # Enable/disable translation UI elements based on checkbox
-        self._enable_translation.stateChanged.connect(self._toggle_translation_options)
